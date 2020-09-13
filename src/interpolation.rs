@@ -107,8 +107,9 @@ where
                 interpolate_multiple: None,
                 ..
             } => {
+                let len = range.len();
                 for (percent, index) in range.enumerate() {
-                    let percent = (percent + 1) as f32 / (indices.len() + 1) as f32;
+                    let percent = (percent + 1) as f32 / (len + 1) as f32;
 
                     vertices[index] = interpolate(a.clone(), b.clone(), percent);
                 }
@@ -116,14 +117,15 @@ where
             CustomFnBox {
                 interpolate_multiple: Some(interpolate),
                 ..
-            } => interpolate(a, b, indices, vertices),
+            } => interpolate(a, b, range, vertices),
             CustomFnBox {
                 interpolate,
                 interpolate_multiple: None,
                 ..
             } => {
+                let len = range.len();
                 for (percent, index) in range.enumerate() {
-                    let percent = (percent + 1) as f32 / (indices.len() + 1) as f32;
+                    let percent = (percent + 1) as f32 / (len + 1) as f32;
 
                     vertices[index] = interpolate(a.clone(), b.clone(), percent);
                 }
@@ -188,10 +190,12 @@ pub fn slerp_multiple<T: Vector>(a: T, b: T, indices: Range<usize>, points: &mut
     let angle = a.clone().dot(b.clone()).acos();
     let sin = angle.sin().recip();
 
-    for (percent, index) in indices.enumerate() {
-        let percent = (percent + 1) as f32 / (indices.len() + 1) as f32;
+    let len = indices.len();
 
-        points[*index as usize] = a.clone() * (((1.0 - percent) * angle).sin() * sin)
+    for (percent, index) in indices.enumerate() {
+        let percent = (percent + 1) as f32 / (len + 1) as f32;
+
+        points[index] = a.clone() * (((1.0 - percent) * angle).sin() * sin)
             + b.clone() * ((percent * angle).sin() * sin);
     }
 }
@@ -218,10 +222,12 @@ pub fn normalized_lerp_half<T: Vector>(a: T, b: T) -> T {
 /// reimplemented.
 ///
 pub fn normalized_lerp_multiple<T: Vector>(a: T, b: T, indices: Range<usize>, points: &mut [T]) {
-    for (percent, index) in indices.enumerate() {
-        let percent = (percent + 1) as f32 / (indices.len() + 1) as f32;
+    let len = indices.len();
 
-        points[*index as usize] = (a.clone() * (1.0 - percent) + b.clone() * percent).normalize();
+    for (percent, index) in indices.enumerate() {
+        let percent = (percent + 1) as f32 / (len + 1) as f32;
+
+        points[index] = (a.clone() * (1.0 - percent) + b.clone() * percent).normalize();
     }
 }
 
@@ -245,8 +251,9 @@ pub fn lerp_half<T: Vector>(a: T, b: T) -> T {
 /// reimplemented.
 ///
 pub fn lerp_multiple<T: Vector>(a: T, b: T, indices: Range<usize>, points: &mut [T]) {
+    let len = indices.len();
     for (percent, index) in indices.enumerate() {
-        let percent = (percent + 1) as f32 / (indices.len() + 1) as f32;
+        let percent = (percent + 1) as f32 / (len + 1) as f32;
 
         points[index] = a.clone() * (1.0 - percent) + b.clone() * percent;
     }
