@@ -6,7 +6,9 @@ pub trait ReshapeImpl {
             match operation {
                 Operation::CreateDefaultIndices => self.create_default_indices(shape),
                 Operation::UnrollIndices => self.unroll_indices(shape),
-                _ => unreachable!(),
+                Operation::Subdivide {
+                    ..
+                } => {}
             }
         }
     }
@@ -39,6 +41,6 @@ impl ReshapeImpl for DefaultImpl {
             return;
         }
 
-        shape.indices = Some((0..shape.attributes[0].len()).collect());
+        shape.indices = Some((0..shape.attributes[0].len() as u32).collect());
     }
 }

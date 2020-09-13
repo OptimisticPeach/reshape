@@ -41,7 +41,6 @@ impl VertexAttribute {
             VertexAttribute::Colour(x) => x.len(),
             VertexAttribute::Normal(x) => x.len(),
             VertexAttribute::UV(x) => x.len(),
-            _ => unreachable!(),
         }
     }
 

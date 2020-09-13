@@ -9,13 +9,14 @@ pub use into_colour::IntoVec4Colour;
 use topology::Topology;
 use vertex_attribute::VertexAttribute;
 use crate::reshaper::{DefaultImpl, ReshapeImpl};
-use std::marker::PhantomData;
+pub use crate::interpolation::{Vector, LerpParams};
 
 mod indices;
 mod into_colour;
 mod topology;
 mod vertex_attribute;
 mod reshaper;
+mod interpolation;
 
 pub trait ShapeSupplier3D {
     fn attributes(&self) -> Vec<VertexAttribute>;
@@ -86,23 +87,35 @@ impl Shape {
 }
 
 #[non_exhaustive]
-#[derive(Clone, Debug, Default)]
+#[derive(Debug)]
 pub enum Operation {
     CreateDefaultIndices,
     UnrollIndices,
+    Subdivide {
+        subdivisions: usize,
+        position_interpolation: LerpParams<Vec3>,
+        colour_interpolation: LerpParams<Vec4>,
+        uv_interpolation: LerpParams<Vec2>,
+        ///
+        /// If set to None, this will try to recalculate
+        /// the normals of a triangle mesh with the correct
+        /// topology, and if unable, this will use linear
+        /// interpolation and normalization to calculate the
+        /// new normals.
+        ///
+        normal_interpolation: Option<LerpParams<Vec3>>,
+    }
 }
 
-#[derive(Default, PartialEq, Hash, Clone, Debug)]
-pub struct Reshaper<I: ReshapeImpl = DefaultImpl> {
+#[derive(Default, Debug)]
+pub struct Reshaper {
     commands: Vec<Operation>,
-    _phantom: PhantomData<I>
 }
 
-impl<I: ReshapeImpl> Reshaper<I> {
+impl Reshaper {
     pub fn new() -> Self {
         Self {
             commands: Vec::new(),
-            _phantom: PhantomData,
         }
     }
 
@@ -116,13 +129,11 @@ impl<I: ReshapeImpl> Reshaper<I> {
         self
     }
 
-    pub fn apply(&self, shape: &mut Shape) where I: Default {
-        let mut implementation = I::default();
-
-        self.apply_custom(shape, &mut implementation);
+    pub fn apply(&self, shape: &mut Shape) {
+        self.apply_custom(shape, &mut DefaultImpl);
     }
 
-    pub fn apply_custom(&self, shape: &mut Shape, implementation: &mut I) {
-        implementation.execute_all(&self.operations, shape);
+    pub fn apply_custom(&self, shape: &mut Shape, implementation: &mut impl ReshapeImpl) {
+        implementation.execute_all(&self.commands, shape);
     }
 }
