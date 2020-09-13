@@ -94,7 +94,40 @@ impl<T> LerpParams<T> where T: Vector {
         }
     }
 
-    pub fn interpolate_multiple(&self, a: T, b: T, indices: &[u32], )
+    pub fn interpolate_multiple(&mut self, a: T, b: T, indices: &[u32], vertices: &mut [T]) {
+        use LerpParams::*;
+        match self {
+            Lerp => lerp_multiple(a, b, indices, vertices),
+            Slerp => geometric_slerp_multiple(a, b, indices, vertices),
+            NormalizedLerp => normalized_lerp_multiple(a, b, indices, vertices),
+            CustomFn {
+                interpolate_multiple: Some(interpolate),
+                ..
+            } => interpolate(a, b, indices, vertices),
+            CustomFn {
+                interpolate,
+                interpolate_multiple: None,
+                ..
+            } => for (percent, index) in indices.iter().enumerate() {
+                let percent = (percent + 1) as f32 / (indices.len() + 1) as f32;
+
+                vertices[*index as usize] = interpolate(a.clone(), b.clone(), percent);
+            },
+            CustomFnBox {
+                interpolate_multiple: Some(interpolate),
+                ..
+            } => interpolate(a, b, indices, vertices),
+            CustomFnBox {
+                interpolate,
+                interpolate_multiple: None,
+                ..
+            } => for (percent, index) in indices.iter().enumerate() {
+                let percent = (percent + 1) as f32 / (indices.len() + 1) as f32;
+
+                vertices[*index as usize] = interpolate(a.clone(), b.clone(), percent);
+            },
+        }
+    }
 }
 
 impl<T: Vector> Default for LerpParams<T> {
