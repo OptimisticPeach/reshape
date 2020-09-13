@@ -132,7 +132,7 @@ impl ReshapeImpl for DefaultImpl {
             for i in 0..indices.len() / 2 {
                 let a_idx = i * 2;
                 let b_idx = i * 2 + 1;
-                let (a, b) = (chunk[a_idx], chunk[b_idx]);
+                let (a, b) = (indices[a_idx], indices[b_idx]);
 
                 let old_len = shape.attributes[0].len() as u32;
 
@@ -145,7 +145,7 @@ impl ReshapeImpl for DefaultImpl {
                         b: u32,
                     ) {
                         attributes
-                            .extend(std::iter::repeat_with(Default::default).take(subdivisions));
+                            .extend((0..subdivisions).map(|_| Default::default()));
                         interpolation.interpolate_multiple(
                             attributes[a as usize].clone(),
                             attributes[b as usize].clone(),
@@ -170,42 +170,91 @@ impl ReshapeImpl for DefaultImpl {
                 }
 
                 let new_len = shape.attributes[0].len() as u32;
-                let a_idx = a_idx as u32;
-                let b_idx = b_idx as u32;
 
-                indices.extend_from_slice(&[a_idx, old_len, b_idx, new_len - 1]);
+                indices.extend_from_slice(&[a, old_len, b, new_len - 1]);
 
                 for i in old_len..new_len {
                     indices.extend_from_slice(&[i, i + 1]);
                 }
             }
         } else {
-            // TODO
-            unimplemented!();
+            let new_items = (shape.attributes[0].len() / 2) * subdivisions;
+            shape
+                .attributes
+                .iter_mut()
+                .for_each(|x| x.reserve(new_items));
+            for i in 0..shape.attributes[0].len() / 2 {
+                let a_idx = i * 2 + i * subdivisions * 2;
+
+                for attrib in &mut shape.attributes {
+                    fn subdivide_line_noindices<T: Vector + Default + Copy>(
+                        subdivisions: usize,
+                        interpolation: &mut LerpParams<T>,
+                        attributes: &mut Vec<T>,
+                        a: usize,
+                    ) {
+                        attributes
+                            .splice(a + 1..a + 1, (0..subdivisions * 2).map(|_| Default::default()))
+                            .for_each(drop);
+                        interpolation.interpolate_multiple(
+                            attributes[a].clone(),
+                            attributes[a + subdivisions + 1].clone(),
+                            a + 1..a + subdivisions + 1,
+                            attributes,
+                        );
+                        copy_interlaced(&mut attributes[a + 1..a + 1 + subdivisions * 2]);
+                    }
+                    match attrib {
+                        VertexAttribute::Colour(colours) => {
+                            subdivide_line_noindices(subdivisions, colour_interpolation, colours, a_idx)
+                        }
+                        VertexAttribute::Position(positions) => {
+                            subdivide_line_noindices(subdivisions, position_interpolation, positions, a_idx)
+                        }
+                        VertexAttribute::UV(uvs) => {
+                            subdivide_line_noindices(subdivisions, uv_interpolation, uvs, a_idx)
+                        }
+                        VertexAttribute::Normal(normals) => {
+                            subdivide_line_noindices(subdivisions, normal_interpolation, normals, a_idx);
+                        }
+                    }
+                }
+            }
         }
     }
 
     fn subdivide_triangles_cw(
         &mut self,
-        shape: &mut Shape,
-        subdivisions: usize,
-        position_interpolation: &mut LerpParams<Vec3>,
-        colour_interpolation: &mut LerpParams<Vec4>,
-        uv_interpolation: &mut LerpParams<Vec2>,
-        normal_interpolation: Option<&mut LerpParams<Vec3>>,
+        _shape: &mut Shape,
+        _subdivisions: usize,
+        _position_interpolation: &mut LerpParams<Vec3>,
+        _colour_interpolation: &mut LerpParams<Vec4>,
+        _uv_interpolation: &mut LerpParams<Vec2>,
+        _normal_interpolation: Option<&mut LerpParams<Vec3>>,
     ) {
         unimplemented!()
     }
 
     fn subdivide_triangles_ccw(
         &mut self,
-        shape: &mut Shape,
-        subdivisions: usize,
-        position_interpolation: &mut LerpParams<Vec3>,
-        colour_interpolation: &mut LerpParams<Vec4>,
-        uv_interpolation: &mut LerpParams<Vec2>,
-        normal_interpolation: Option<&mut LerpParams<Vec3>>,
+        _shape: &mut Shape,
+        _subdivisions: usize,
+        _position_interpolation: &mut LerpParams<Vec3>,
+        _colour_interpolation: &mut LerpParams<Vec4>,
+        _uv_interpolation: &mut LerpParams<Vec2>,
+        _normal_interpolation: Option<&mut LerpParams<Vec3>>,
     ) {
         unimplemented!()
+    }
+}
+
+///
+/// Copies `[A, B, _, _]` to `[A, A, B, B]` in place
+/// for an arbitrary size of `[A, B, C, .., _, _, _, ..]`.
+///
+fn copy_interlaced<T: Copy>(slice: &mut [T]) {
+    debug_assert_eq!(slice.len() % 2, 0);
+    for i in (0..slice.len()).rev() {
+        slice[i] = slice[i / 2];
     }
 }
