@@ -1,5 +1,6 @@
-use core::ops::{FnMut, Add, Mul};
 use core::clone::Clone;
+use core::ops::{Add, FnMut, Mul};
+use std::ops::Range;
 
 pub trait Vector: Clone + Add<Self, Output = Self> + Mul<f32, Output = Self> {
     fn dot(self, other: Self) -> f32;
@@ -40,30 +41,27 @@ pub enum LerpParams<T: Vector> {
     CustomFn {
         interpolate: fn(T, T, f32) -> T,
         interpolate_half: Option<fn(T, T) -> T>,
-        interpolate_multiple: Option<fn(T, T, &[u32], &mut [T])>,
+        interpolate_multiple: Option<fn(T, T, Range<usize>, &mut [T])>,
     },
     CustomFnBox {
         interpolate: Box<dyn FnMut(T, T, f32) -> T>,
         interpolate_half: Option<Box<dyn FnMut(T, T) -> T>>,
-        interpolate_multiple: Option<Box<dyn FnMut(T, T, &[u32], &mut [T])>>,
-    }
+        interpolate_multiple: Option<Box<dyn FnMut(T, T, Range<usize>, &mut [T])>>,
+    },
 }
 
-impl<T> LerpParams<T> where T: Vector {
+impl<T> LerpParams<T>
+where
+    T: Vector,
+{
     pub fn interpolate(&mut self, a: T, b: T, p: f32) -> T {
         use LerpParams::*;
         match self {
             Lerp => lerp(a, b, p),
-            Slerp => geometric_slerp(a, b, p),
+            Slerp => slerp(a, b, p),
             NormalizedLerp => normalized_lerp(a, b, p),
-            CustomFn {
-                interpolate,
-                ..
-            } => interpolate(a, b, p),
-            CustomFnBox {
-                interpolate,
-                ..
-            } => interpolate(a, b, p),
+            CustomFn { interpolate, .. } => interpolate(a, b, p),
+            CustomFnBox { interpolate, .. } => interpolate(a, b, p),
         }
     }
 
@@ -71,7 +69,7 @@ impl<T> LerpParams<T> where T: Vector {
         use LerpParams::*;
         match self {
             Lerp => lerp_half(a, b),
-            Slerp => geometric_slerp_half(a, b),
+            Slerp => slerp_half(a, b),
             NormalizedLerp => normalized_lerp_half(a, b),
             CustomFn {
                 interpolate_half: Some(interpolate),
@@ -94,25 +92,27 @@ impl<T> LerpParams<T> where T: Vector {
         }
     }
 
-    pub fn interpolate_multiple(&mut self, a: T, b: T, indices: &[u32], vertices: &mut [T]) {
+    pub fn interpolate_multiple(&mut self, a: T, b: T, range: Range<usize>, vertices: &mut [T]) {
         use LerpParams::*;
         match self {
-            Lerp => lerp_multiple(a, b, indices, vertices),
-            Slerp => geometric_slerp_multiple(a, b, indices, vertices),
-            NormalizedLerp => normalized_lerp_multiple(a, b, indices, vertices),
+            Lerp => lerp_multiple(a, b, range, vertices),
+            Slerp => slerp_multiple(a, b, range, vertices),
+            NormalizedLerp => normalized_lerp_multiple(a, b, range, vertices),
             CustomFn {
                 interpolate_multiple: Some(interpolate),
                 ..
-            } => interpolate(a, b, indices, vertices),
+            } => interpolate(a, b, range, vertices),
             CustomFn {
                 interpolate,
                 interpolate_multiple: None,
                 ..
-            } => for (percent, index) in indices.iter().enumerate() {
-                let percent = (percent + 1) as f32 / (indices.len() + 1) as f32;
+            } => {
+                for (percent, index) in range.enumerate() {
+                    let percent = (percent + 1) as f32 / (indices.len() + 1) as f32;
 
-                vertices[*index as usize] = interpolate(a.clone(), b.clone(), percent);
-            },
+                    vertices[index] = interpolate(a.clone(), b.clone(), percent);
+                }
+            }
             CustomFnBox {
                 interpolate_multiple: Some(interpolate),
                 ..
@@ -121,11 +121,13 @@ impl<T> LerpParams<T> where T: Vector {
                 interpolate,
                 interpolate_multiple: None,
                 ..
-            } => for (percent, index) in indices.iter().enumerate() {
-                let percent = (percent + 1) as f32 / (indices.len() + 1) as f32;
+            } => {
+                for (percent, index) in range.enumerate() {
+                    let percent = (percent + 1) as f32 / (indices.len() + 1) as f32;
 
-                vertices[*index as usize] = interpolate(a.clone(), b.clone(), percent);
-            },
+                    vertices[index] = interpolate(a.clone(), b.clone(), percent);
+                }
+            }
         }
     }
 }
@@ -143,7 +145,9 @@ impl<T: Vector> std::fmt::Debug for LerpParams<T> {
             LerpParams::Slerp => write!(fmt, "Slerp"),
             LerpParams::NormalizedLerp => write!(fmt, "NormalizedLerp"),
             LerpParams::CustomFn { .. } => write!(fmt, "CustomFn {{ Custom Implementation }}"),
-            LerpParams::CustomFnBox { .. } => write!(fmt, "CustomFnBox {{ Custom Implementation }}"),
+            LerpParams::CustomFnBox { .. } => {
+                write!(fmt, "CustomFnBox {{ Custom Implementation }}")
+            }
         }
     }
 }
@@ -155,7 +159,7 @@ impl<T: Vector> std::fmt::Debug for LerpParams<T> {
 ///
 /// Note: `a` and `b` should both be normalized for normalized results.
 ///
-pub fn geometric_slerp<T: Vector>(a: T, b: T, p: f32) -> T {
+pub fn slerp<T: Vector>(a: T, b: T, p: f32) -> T {
     let angle = a.clone().dot(b.clone()).acos();
 
     let sin = angle.sin().recip();
@@ -168,7 +172,7 @@ pub fn geometric_slerp<T: Vector>(a: T, b: T, p: f32) -> T {
 ///
 /// Note: `a` and `b` should both be normalized for normalized results.
 ///
-pub fn geometric_slerp_half<T: Vector>(a: T, b: T) -> T {
+pub fn slerp_half<T: Vector>(a: T, b: T) -> T {
     (a.clone() + b.clone()) * (2.0 * (1.0 + a.dot(b))).sqrt().recip()
 }
 
@@ -180,15 +184,15 @@ pub fn geometric_slerp_half<T: Vector>(a: T, b: T) -> T {
 ///
 /// Note: `a` and `b` should both be normalized for normalized results.
 ///
-pub fn geometric_slerp_multiple<T: Vector>(a: T, b: T, indices: &[u32], points: &mut [T]) {
+pub fn slerp_multiple<T: Vector>(a: T, b: T, indices: Range<usize>, points: &mut [T]) {
     let angle = a.clone().dot(b.clone()).acos();
     let sin = angle.sin().recip();
 
-    for (percent, index) in indices.iter().enumerate() {
+    for (percent, index) in indices.enumerate() {
         let percent = (percent + 1) as f32 / (indices.len() + 1) as f32;
 
-        points[*index as usize] =
-            a.clone() * (((1.0 - percent) * angle).sin() * sin) + b.clone() * ((percent * angle).sin() * sin);
+        points[*index as usize] = a.clone() * (((1.0 - percent) * angle).sin() * sin)
+            + b.clone() * ((percent * angle).sin() * sin);
     }
 }
 
@@ -213,8 +217,8 @@ pub fn normalized_lerp_half<T: Vector>(a: T, b: T) -> T {
 /// essentially the same algorithm as `BaseShape` would without ever being
 /// reimplemented.
 ///
-pub fn normalized_lerp_multiple<T: Vector>(a: T, b: T, indices: &[u32], points: &mut [T]) {
-    for (percent, index) in indices.iter().enumerate() {
+pub fn normalized_lerp_multiple<T: Vector>(a: T, b: T, indices: Range<usize>, points: &mut [T]) {
+    for (percent, index) in indices.enumerate() {
         let percent = (percent + 1) as f32 / (indices.len() + 1) as f32;
 
         points[*index as usize] = (a.clone() * (1.0 - percent) + b.clone() * percent).normalize();
@@ -240,10 +244,10 @@ pub fn lerp_half<T: Vector>(a: T, b: T) -> T {
 /// essentially the same algorithm as `BaseShape` would without ever being
 /// reimplemented.
 ///
-pub fn lerp_multiple<T: Vector>(a: T, b: T, indices: &[u32], points: &mut [T]) {
-    for (percent, index) in indices.iter().enumerate() {
+pub fn lerp_multiple<T: Vector>(a: T, b: T, indices: Range<usize>, points: &mut [T]) {
+    for (percent, index) in indices.enumerate() {
         let percent = (percent + 1) as f32 / (indices.len() + 1) as f32;
 
-        points[*index as usize] = a.clone() * (1.0 - percent) + b.clone() * percent;
+        points[index] = a.clone() * (1.0 - percent) + b.clone() * percent;
     }
 }

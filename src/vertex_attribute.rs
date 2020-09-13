@@ -60,4 +60,13 @@ impl VertexAttribute {
             VertexAttribute::UV(uv) => unroll(uv, indices),
         }
     }
+
+    pub(crate) fn reserve(&mut self, new_items: usize) {
+        match self {
+            VertexAttribute::Position(x) => x.reserve(new_items),
+            VertexAttribute::Colour(x) => x.reserve(new_items),
+            VertexAttribute::Normal(x) => x.reserve(new_items),
+            VertexAttribute::UV(x) => x.reserve(new_items),
+        }
+    }
 }

@@ -4,19 +4,19 @@ pub use glam::{Vec2, Vec4};
 // This is done to make code inference work.
 pub use glam::Vec3;
 // pub use glam::Vec3A as Vec3;
+pub use crate::interpolation::{LerpParams, Vector};
+use crate::reshaper::{DefaultImpl, ReshapeImpl};
 use indices::Indices;
 pub use into_colour::IntoVec4Colour;
 use topology::Topology;
 use vertex_attribute::VertexAttribute;
-use crate::reshaper::{DefaultImpl, ReshapeImpl};
-pub use crate::interpolation::{Vector, LerpParams};
 
 mod indices;
+mod interpolation;
 mod into_colour;
+mod reshaper;
 mod topology;
 mod vertex_attribute;
-mod reshaper;
-mod interpolation;
 
 pub trait ShapeSupplier3D {
     fn attributes(&self) -> Vec<VertexAttribute>;
@@ -47,6 +47,11 @@ impl Shape {
         }
     }
 
+    ///
+    /// Note: Any operation in this library can be written
+    /// assuming this returns `Ok(())`. Failure to ensure
+    /// may result in a panic or incorrect results.
+    ///
     pub fn validate_shape(&self) -> Result<(), ShapeValidationError> {
         if self.attributes.len() == 0 {
             return Err(ShapeValidationError::InsufficientAttributes);
@@ -104,7 +109,7 @@ pub enum Operation {
         /// new normals.
         ///
         normal_interpolation: Option<LerpParams<Vec3>>,
-    }
+    },
 }
 
 #[derive(Default, Debug)]
@@ -129,11 +134,11 @@ impl Reshaper {
         self
     }
 
-    pub fn apply(&self, shape: &mut Shape) {
+    pub fn apply(&mut self, shape: &mut Shape) {
         self.apply_custom(shape, &mut DefaultImpl);
     }
 
-    pub fn apply_custom(&self, shape: &mut Shape, implementation: &mut impl ReshapeImpl) {
-        implementation.execute_all(&self.commands, shape);
+    pub fn apply_custom(&mut self, shape: &mut Shape, implementation: &mut impl ReshapeImpl) {
+        implementation.execute_all(&mut self.commands, shape);
     }
 }
