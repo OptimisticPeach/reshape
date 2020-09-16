@@ -250,11 +250,30 @@ impl ReshapeImpl for DefaultImpl {
 
 ///
 /// Copies `[A, B, _, _]` to `[A, A, B, B]` in place
-/// for an arbitrary size of `[A, B, C, .., _, _, _, ..]`.
+/// for an arbitrary size of `[A, B, C, .., _, _, _, ..]`
+/// really fast.
 ///
 fn copy_interlaced<T: Copy>(slice: &mut [T]) {
-    debug_assert_eq!(slice.len() % 2, 0);
-    for i in (0..slice.len()).rev() {
-        slice[i] = slice[i / 2];
+    if slice.len() == 1 {
+        return;
+    }
+    unsafe {
+        #[inline]
+        unsafe fn interlace_mul4<T: Copy>(slice: &mut [T]) {
+            for i in (0..slice.len() / 4).rev() {
+                *slice.get_unchecked_mut(i * 4 + 3) = *slice.get_unchecked(i * 2 + 1);
+                *slice.get_unchecked_mut(i * 4 + 2) = *slice.get_unchecked(i * 2 + 1);
+                *slice.get_unchecked_mut(i * 4 + 1) = *slice.get_unchecked(i * 2 + 0);
+                *slice.get_unchecked_mut(i * 4 + 0) = *slice.get_unchecked(i * 2 + 0);
+            }
+        }
+        if slice.len() % 4 == 2 {
+            let old_slice = slice;
+            let slice = &mut old_slice[2..];
+            interlace_mul4(slice);
+            *old_slice.get_unchecked_mut(1) = *old_slice.get_unchecked(0);
+        } else {
+            interlace_mul4(slice)
+        }
     }
 }
