@@ -1,5 +1,6 @@
 use crate::{LerpParams, Operation, Shape, Topology, Vector, VertexAttribute};
 use crate::{Vec2, Vec3, Vec4};
+use std::ops::Index;
 
 pub trait ReshapeImpl {
     fn execute_all(&mut self, operations: &mut [Operation], shape: &mut Shape) {
@@ -276,4 +277,52 @@ fn copy_interlaced<T: Copy>(slice: &mut [T]) {
             interlace_mul4(slice)
         }
     }
+}
+
+struct TriangleSubdivideParams<'a> {
+    pub is_clockwise: bool,
+    pub shape: &'a mut Shape,
+    pub subdivisions: usize,
+    pub position_interpolation: &'a mut LerpParams<Vec3>,
+    pub colour_interpolation: &'a mut LerpParams<Vec4>,
+    pub uv_interpolation: &'a mut LerpParams<Vec2>,
+    pub normal_interpolation: Option<&'a mut LerpParams<Vec3>>,
+}
+
+impl TriangleParams {
+    fn make_slice<'a, T>(&'_ self, slice: &'a [T], forward: bool) -> Slice<'a, T> {
+        if !self.is_clockwise ^ forward {
+            Slice::Backward(slice)
+        } else {
+            Slice::Forward(slice)
+        }
+    }
+}
+
+enum Slice<'a, T> {
+    Forward(&'a [T]),
+    Backward(&'a [T]),
+}
+
+impl<'a, T> Slice<'a, T> {
+    pub fn len(&self) -> usize {
+        match self {
+            Slice::Forward(x) | Slice::Backward(x) => x.len()
+        }
+    }
+}
+
+impl<'a, T> Index<usize> for Slice<'a, T> {
+    type Output = T;
+
+    fn index(&self, idx: usize) -> &T {
+        match self {
+            Slice::Forward(x) => &x[idx],
+            Slice::Backward(x) => &x[x.len() - idx - 1],
+        }
+    }
+}
+
+fn subdivide_triangles(triangle_params: TriangleSubdivideParams) {
+
 }
