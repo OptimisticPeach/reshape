@@ -1,6 +1,7 @@
 use crate::{LerpParams, Operation, Shape, Topology, Vector, VertexAttribute};
 use crate::{Vec2, Vec3, Vec4};
-use std::ops::Index;
+use std::ops::{Index, Range};
+use std::collections::HashMap;
 
 pub trait ReshapeImpl {
     fn execute_all(&mut self, operations: &mut [Operation], shape: &mut Shape) {
@@ -226,26 +227,42 @@ impl ReshapeImpl for DefaultImpl {
 
     fn subdivide_triangles_cw(
         &mut self,
-        _shape: &mut Shape,
-        _subdivisions: usize,
-        _position_interpolation: &mut LerpParams<Vec3>,
-        _colour_interpolation: &mut LerpParams<Vec4>,
-        _uv_interpolation: &mut LerpParams<Vec2>,
-        _normal_interpolation: Option<&mut LerpParams<Vec3>>,
+        shape: &mut Shape,
+        subdivisions: usize,
+        position_interpolation: &mut LerpParams<Vec3>,
+        colour_interpolation: &mut LerpParams<Vec4>,
+        uv_interpolation: &mut LerpParams<Vec2>,
+        normal_interpolation: Option<&mut LerpParams<Vec3>>,
     ) {
-        unimplemented!()
+        subdivide_triangles(TriangleSubdivideParams {
+            shape,
+            subdivisions,
+            position_interpolation,
+            colour_interpolation,
+            uv_interpolation,
+            normal_interpolation,
+            is_ccw: true,
+        })
     }
 
     fn subdivide_triangles_ccw(
         &mut self,
-        _shape: &mut Shape,
-        _subdivisions: usize,
-        _position_interpolation: &mut LerpParams<Vec3>,
-        _colour_interpolation: &mut LerpParams<Vec4>,
-        _uv_interpolation: &mut LerpParams<Vec2>,
-        _normal_interpolation: Option<&mut LerpParams<Vec3>>,
+        shape: &mut Shape,
+        subdivisions: usize,
+        position_interpolation: &mut LerpParams<Vec3>,
+        colour_interpolation: &mut LerpParams<Vec4>,
+        uv_interpolation: &mut LerpParams<Vec2>,
+        normal_interpolation: Option<&mut LerpParams<Vec3>>,
     ) {
-        unimplemented!()
+        subdivide_triangles(TriangleSubdivideParams {
+            shape,
+            subdivisions,
+            position_interpolation,
+            colour_interpolation,
+            uv_interpolation,
+            normal_interpolation,
+            is_ccw: false,
+        })
     }
 }
 
@@ -280,7 +297,7 @@ fn copy_interlaced<T: Copy>(slice: &mut [T]) {
 }
 
 struct TriangleSubdivideParams<'a> {
-    pub is_clockwise: bool,
+    pub is_ccw: bool,
     pub shape: &'a mut Shape,
     pub subdivisions: usize,
     pub position_interpolation: &'a mut LerpParams<Vec3>,
@@ -289,40 +306,550 @@ struct TriangleSubdivideParams<'a> {
     pub normal_interpolation: Option<&'a mut LerpParams<Vec3>>,
 }
 
-impl TriangleParams {
-    fn make_slice<'a, T>(&'_ self, slice: &'a [T], forward: bool) -> Slice<'a, T> {
-        if !self.is_clockwise ^ forward {
-            Slice::Backward(slice)
+#[derive(Copy, Clone, Debug, PartialEq, Hash)]
+enum RevRange {
+    Forward(u32, u32),
+    Backward(u32, u32),
+}
+
+impl RevRange {
+    pub fn forward(range: Range<u32>, ccw: bool) -> Self {
+        if ccw {
+            RevRange::Forward(range.start, range.end)
         } else {
-            Slice::Forward(slice)
+            RevRange::Backward(range.start, range.end)
         }
     }
-}
 
-enum Slice<'a, T> {
-    Forward(&'a [T]),
-    Backward(&'a [T]),
-}
+    pub fn backward(range: Range<u32>, ccw: bool) -> Self {
+        if ccw {
+            RevRange::Backward(range.start, range.end)
+        } else {
+            RevRange::Forward(range.start, range.end)
+        }
+    }
 
-impl<'a, T> Slice<'a, T> {
-    pub fn len(&self) -> usize {
+    pub fn index<T>(&self, slice: &[T], index: usize) -> &[T] {
         match self {
-            Slice::Forward(x) | Slice::Backward(x) => x.len()
+            RevRange::Forward(start, end) => {
+                &slice[start as usize..end as usize][index]
+            },
+            RevRange::Backward(start, end) => {
+                &slice[start as usize..end as usize][(end as usize - start as usize) - index - 1]
+            },
         }
     }
-}
 
-impl<'a, T> Index<usize> for Slice<'a, T> {
-    type Output = T;
-
-    fn index(&self, idx: usize) -> &T {
+    pub fn index_mut<T>(&self, slice: &mut [T], index: usize) -> &mut [T] {
         match self {
-            Slice::Forward(x) => &x[idx],
-            Slice::Backward(x) => &x[x.len() - idx - 1],
+            RevRange::Forward(start, end) => {
+                &mut slice[start as usize..end as usize][index]
+            },
+            RevRange::Backward(start, end) => {
+                &mut slice[start as usize..end as usize][(end as usize - start as usize) - index - 1]
+            },
+        }
+    }
+
+    pub fn rev(self) -> Self {
+        match self {
+            RevRange::Forward(start, end) => RevRange::Backward(start, end),
+            RevRange::Backward(start, end) => RevRange::Forward(start, end),
+        }
+    }
+
+    pub fn len(&self) -> u32 {
+        match self {
+            RevRange::Forward(start, end) | RevRange::Backward(start, end) => (*end - *start) as u32
+        }
+    }
+
+    pub fn first(&self) -> u32 {
+        match self {
+            RevRange::Forward(start, _) => *start,
+            RevRange::Backward(_, start) => *start,
+        }
+    }
+
+    pub fn last(&self) -> u32 {
+        match self {
+            RevRange::Forward(_, end) => *end - 1,
+            RevRange::Backward(end, _) => *end + 1,
+        }
+    }
+
+    pub fn get(&self, n: usize) -> u32 {
+        if n >= self.len() as usize {
+            panic!("Index {} is out of range", n);
+        }
+        match self {
+            RevRange::Forward(start, _) => *start + n,
+            RevRange::Backward(_, start) => *start - n,
         }
     }
 }
 
-fn subdivide_triangles(triangle_params: TriangleSubdivideParams) {
+impl<'a> Iterator for &'a mut RevRange {
+    type Item = u32;
+    fn next(&mut self) -> Option<u32> {
+        match self {
+            RevRange::Forward(start, end) => {
+                if *start == *end {
+                    return None;
+                }
 
+                let temp = *start;
+                *start += 1;
+                Some(temp)
+            },
+            RevRange::Backward(end, start) => {
+                if *start == *end {
+                    return None;
+                }
+
+                let temp = *start;
+                *start -= 1;
+                Some(temp)
+            },
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len(), Some(self.len()))
+    }
+}
+
+impl<'a> DoubleEndedIterator for &'a mut RevRange {
+    fn next_back(&mut self) -> Option<u32> {
+        match self {
+            RevRange::Forward(start, end) => {
+                if *start == *end {
+                    return None;
+                }
+
+                let temp = *end;
+                *end -= 1;
+                Some(temp)
+            },
+            RevRange::Backward(end, start) => {
+                if *start == *end {
+                    return None;
+                }
+
+                let temp = *end;
+                *end += 1;
+                Some(temp)
+            },
+        }
+    }
+}
+
+impl<'a> ExactSizeIterator for &'a mut RevRange {
+    fn len(&self) -> usize {
+        RevRange::len(&*self) as usize
+    }
+
+    fn is_empty(&self) -> bool {
+        match self {
+            RevRange::Forward(start, end) | RevRange::Backward(start, end) => *start == *end
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+struct IndexedTriangle {
+    a: u32,
+    b: u32,
+    c: u32,
+    ab: RevRange,
+    bc: RevRange,
+    ca: RevRange,
+}
+
+macro_rules! indexed_triangle_idx {
+    ($name:ident, $first:ident, $last:ident, $both:ident) => {
+        fn $name(&self, idx: usize) -> u32 {
+            if idx == 0 {
+                self.$first
+            } else if idx == 1 + self.$both.len() {
+                self.$last
+            } else {
+                self.$both.nth(idx - 1)
+            }
+        }
+    };
+}
+
+impl IndexedTriangle {
+    fn new(a: u32, b: u32, c: u32, ab: RevRange, bc: RevRange, ca: RevRange) -> Self {
+        Self {
+            a,
+            b,
+            c,
+            ab,
+            bc,
+            ca,
+        }
+    }
+    indexed_triangle_idx!(idx_ab, a, b, ab);
+    indexed_triangle_idx!(idx_bc, b, c, bc);
+    indexed_triangle_idx!(idx_ca, c, a, ca);
+}
+
+fn subdivide_line<T: Vector + Default>(a: u32, b: u32, interpolation: &mut LerpParams<T>, subdivisions: usize, data: &mut Vec<T>) {
+    data.extend((0..subdivisions).map(|_| Default::default()));
+
+    interpolation.interpolate_multiple(data[a as usize].clone(), data[b as usize].clone(), data.len() - 1 - subdivisions..data.len(), &mut *data);
+}
+
+fn subdivide_half<T: Vector + Default>(a: u32, b: u32, interpolation: &mut LerpParams<T>, data: &mut Vec<T>) {
+    let temp = interpolation.interpolate_half(data[a as usize].clone(), data[b as usize].clone());
+    data.push(temp);
+}
+
+macro_rules! subdivide_all {
+    (half: $a:expr, $b:expr, $params:expr) => {
+        for attribute in &mut $params.shape.attributes {
+            use VertexAttribute::*;
+            match attribute {
+                Colour(x) => subdivide_half($a, $b, &mut $params.colour_interpolation, x),
+                Position(x) => subdivide_half($a, $b, &mut $params.position_interpolation, x),
+                UV(x) => subdivide_half($a, $b, &mut $params.uv_interpolation, x),
+                Normal(x) => {
+                    if let Some(normal_interpolation) = &mut $params.normal_interpolation {
+                        subdivide_half($a, $b, normal_interpolation, x);
+                    } else {
+                        x.push(Default::default());
+                    }
+                }
+            }
+        }
+    };
+    (line: $a:expr, $b:expr, $subdivisions:expr, $params:expr) => {
+        for attribute in &mut $params.shape.attributes {
+            use VertexAttribute::*;
+            match attribute {
+                Colour(x) => subdivide_line($a, $b, &mut $params.colour_interpolation, $subdivisions, x),
+                Position(x) => subdivide_half($a, $b, &mut $params.position_interpolation, $subdivisions, x),
+                UV(x) => subdivide_half($a, $b, &mut $params.uv_interpolation, $subdivisions, x),
+                Normal(x) => {
+                    if let Some(normal_interpolation) = &mut $params.normal_interpolation {
+                        subdivide_half($a, $b, normal_interpolation, $subdivisions, x);
+                    } else {
+                        x.extend((0..$subdivisions).map(|_| Default::default()));
+                    }
+                }
+            }
+        }
+    };
+}
+
+macro_rules! len {
+    ($shape:expr) => {
+        $shape.attributes[0].len()
+    };
+}
+
+impl IndexedTriangle {
+    fn add_indices(&self, next: Option<&Self>, indices: &mut Vec<u32>) {
+        match (self.ab.len(), next) {
+            (0, None) => {
+                indices.extend_from_slice(&[self.a, self.b, self.c]);
+            },
+            (1, None) => {
+                indices.extend_from_slice(
+                    &[
+                        // Triangle A
+                        self.a,
+                        self.ab.first(),
+                        self.ca.first(),
+                        // Triangle B
+                        self.b,
+                        self.bc.first(),
+                        self.ab.first(),
+                        // Triangle C
+                        self.c,
+                        self.ca.first(),
+                        self.bc.first(),
+                    ]
+                );
+            },
+            (
+                2,
+                Some(
+                    IndexedTriangle {
+                        a: x,
+                        b,
+                        c,
+                        ..
+                     }
+                )
+            ) if *x == *b && *b == *c => {
+                indices.extend_from_slice(
+                    &[
+                        // Triangle A
+                        self.a,
+                        self.ab.first(),
+                        self.ca.last(),
+                        // Triangle B
+                        self.b,
+                        self.bc.first(),
+                        self.ab.last(),
+                        // Triangle C
+                        self.c,
+                        self.ca.first(),
+                        self.bc.last(),
+
+                        // Adjacent to outer triangles:
+                        // Adj. A
+                        self.ca.last(),
+                        self.ab.first(),
+                        x,
+                        // Adj. B
+                        self.ab.last(),
+                        self.bc.first(),
+                        x,
+                        // Adj. C
+                        self.bc.last(),
+                        self.ca.first(),
+                        x,
+
+                        // Opposite to outer triangles:
+                        // Opp. A
+                        self.bc.first(),
+                        self.bc.last(),
+                        x,
+                        // Opp. B
+                        self.ca.first(),
+                        self.ca.last(),
+                        x,
+                        // Opp. C
+                        self.ab.first(),
+                        self.ab.last(),
+                        x
+                    ]
+                );
+            },
+            (side_length, Some(inner)) => {
+                indices.extend_from_slice(
+                    &[
+                        // Triangle A
+                        self.a,
+                        self.ab.first(),
+                        self.ca.last(),
+                        // Triangle B
+                        self.b,
+                        self.bc.first(),
+                        self.ab.last(),
+                        // Triangle C
+                        self.c,
+                        self.ca.first(),
+                        self.bc.last(),
+
+                        // Adjacent to outer triangles:
+                        // Adj. A
+                        self.ca.last(),
+                        self.ab.first(),
+                        inner.idx_ab(0),
+                        // Adj. B
+                        self.ab.last(),
+                        self.bc.first(),
+                        inner.idx_bc(0),
+                        // Adj. C
+                        self.bc.last(),
+                        self.ca.first(),
+                        inner.idx_ca(0),
+
+                        // Err, not sure how to explain this one,
+                        // it's adjacent to the triangles adjacent
+                        // to the outer triangles, while sharing a
+                        // vertex with the outer triangle, and is
+                        // in the backwards direction.
+                        self.ca.last(),
+                        inner.idx_ab(0),
+                        (&mut self.ca.clone()).nth_back(1).unwrap(),
+
+                        self.ab.last(),
+                        inner.idx_bc(0),
+                        (&mut self.ab.clone()).nth_back(1).unwrap(),
+
+                        self.bc.last(),
+                        inner.idx_ca(0),
+                        (&mut self.bc.clone()).nth_back(1).unwrap(),
+                    ],
+                );
+                debug_assert!(side_length >= 3);
+
+                indices.reserve((self.ab.len() as usize - 2) * 18);
+                for idx in 0..self.ab.len() as usize - 2 {
+                    indices.extend_from_slice(
+                        &[
+                            self.ab.get(idx),
+                            inner.idx_ab(idx),
+                            self.ab.get(idx + 1),
+
+                            self.ab.get(idx + 1),
+                            inner.idx_ab(idx),
+                            inner.idx_ab(idx + 1),
+                            //
+                            self.bc.get(idx),
+                            inner.idx_bc(idx),
+                            self.bc.get(idx + 1),
+
+                            self.bc.get(idx + 1),
+                            inner.idx_bc(idx),
+                            inner.idx_bc(idx + 1),
+                            //
+                            self.ca.get(idx),
+                            inner.idx_ca(idx),
+                            self.ca.get(idx + 1),
+
+                            self.ca.get(idx + 1),
+                            inner.idx_ca(idx),
+                            inner.idx_ca(idx + 1),
+                        ]
+                    );
+                }
+            },
+            _ => panic!("Invalid arguments to `add_indices`"),
+        }
+    }
+
+    fn make_next_triangle(&self, params: &mut TriangleSubdivideParams) -> Option<Self> {
+        match self.ab.len() {
+            0 | 1 => None,
+            2 => {
+                subdivide_all!(half: self.ab.first(), self.bc.last(), params);
+                let len = len!(params.shape) as u32;
+                Some(
+                    Self {
+                        a: len - 1,
+                        b: len - 1,
+                        c: len - 1,
+                        ab: RevRange::forward(0..0, params.is_ccw),
+                        bc: RevRange::forward(0..0, params.is_ccw),
+                        ca: RevRange::forward(0..0, params.is_ccw),
+                    }
+                )
+            },
+            3 => {
+                subdivide_all!(half: self.ca.get(1), self.ab.get(1), params);
+                subdivide_all!(half: self.ab.get(1), self.bc.get(1), params);
+                subdivide_all!(half: self.bc.get(1), self.ca.get(1), params);
+                let len = len!(params.shape) as u32;
+                Some(
+                    Self {
+                        a: len - 3,
+                        b: len - 2,
+                        c: len - 1,
+                        ab: RevRange::forward(0..0, params.is_ccw),
+                        bc: RevRange::forward(0..0, params.is_ccw),
+                        ca: RevRange::forward(0..0, params.is_ccw),
+                    }
+                )
+            },
+            n => {
+                let a = len!(params.shape) as u32;
+                subdivide_all!(half: self.ca.clone().rev().get(1), self.ab.get(1), params);
+                let b = len!(params.shape) as u32;
+                subdivide_all!(half: self.ab.clone().rev().get(1), self.bc.get(1), params);
+                let c = len!(params.shape) as u32;
+                subdivide_all!(half: self.bc.clone().rev().get(1), self.ca.get(1), params);
+
+                let inner_length = n - 3;
+
+                let ab_start = len!(params.shape) as u32;
+                subdivide_all!(line: a, b, inner_length, params);
+                let ab = RevRange::forward(ab_start..ab_start + inner_length, params.is_ccw);
+
+                let bc_start = len!(params.shape) as u32;
+                subdivide_all!(line: b, c, inner_length, params);
+                let bc = RevRange::forward(bc_start..bc_start + inner_length, params.is_ccw);
+
+                let ca_start = len!(params.shape) as u32;
+                subdivide_all!(line: c, a, inner_length, params);
+                let ca = RevRange::forward(ca_start..ca_start + inner_length, params.is_ccw);
+
+                Some(
+                    Self {
+                        a,
+                        b,
+                        c,
+                        ab,
+                        bc,
+                        ca,
+                    }
+                )
+            },
+        }
+    }
+}
+
+fn subdivide_triangles(mut triangle_params: TriangleSubdivideParams) {
+    // Created from a counter clockwise schematic, but
+    // is agnostic over the winding because triangle_params
+    // creates slices with the correct direction.
+
+    if let Some(old_indices) = triangle_params.shape.indices.take() {
+        let mut indices = Vec::new();
+
+        let mut edge_hashmap = HashMap::<(u32, u32), RevRange>::new();
+
+        for triangle_indices in old_indices.chunks_exact(3) {
+            let a = triangle_indices[0];
+            let b = triangle_indices[1];
+            let c = triangle_indices[2];
+
+            let ab = if let Some(x) = edge_hashmap.get(&(a, b)).or(edge_hashmap.get(&(b, a))).cloned() {
+                x.rev()
+            } else {
+                let ab_start = len!(triangle_params.shape) as u32;
+                subdivide_all!(line: a, b, triangle_params.subdivisions, triangle_params);
+                let range = RevRange::forward(ab_start..ab_start + triangle_params.subdivisions as u32, triangle_params.is_ccw);
+                edge_hashmap.insert((a, b), range);
+
+                range
+            };
+
+            let bc = if let Some(x) = edge_hashmap.get(&(b, c)).or(edge_hashmap.get(&(c, b))).cloned() {
+                x.rev()
+            } else {
+                let bc_start = len!(triangle_params.shape) as u32;
+                subdivide_all!(line: b, c, triangle_params.subdivisions, triangle_params);
+                let range = RevRange::forward(bc_start..bc_start + triangle_params.subdivisions as u32, triangle_params.is_ccw);
+                edge_hashmap.insert((b, c), range);
+
+                range
+            };
+
+            let ca = if let Some(x) = edge_hashmap.get(&(c, a)).or(edge_hashmap.get(&(a, c))).cloned() {
+                x
+            } else {
+                let ca_start = len!(triangle_params.shape) as u32;
+                subdivide_all!(line: c, a, triangle_params.subdivisions, triangle_params);
+                let range = RevRange::forward(ca_start..ca_start + triangle_params.subdivisions as u32, triangle_params.is_ccw);
+                edge_hashmap.insert((c, a), range);
+
+                range
+            };
+
+            let mut triangle = IndexedTriangle::new(a, b, c, ab, bc, ca);
+            let mut next = triangle.make_next_triangle(&mut triangle_params);
+
+            loop {
+                triangle.add_indices(next.as_ref(), &mut indices);
+                if let Some(old_next) = &mut next {
+                    let new_next = old_next.make_next_triangle(&mut triangle_params);
+                    std::mem::swap(&mut triangle, old_next);
+                    next = new_next;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        triangle_params.shape.indices = Some(indices);
+    } else {
+        todo!();
+    }
 }

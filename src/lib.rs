@@ -10,6 +10,7 @@ use indices::Indices;
 pub use into_colour::IntoVec4Colour;
 use topology::Topology;
 use vertex_attribute::VertexAttribute;
+use std::collections::HashSet;
 
 mod indices;
 mod interpolation;
@@ -25,11 +26,42 @@ pub trait ShapeSupplier3D {
 }
 
 pub enum ShapeValidationError {
+    ///
+    /// `attributes.len() == 0`
+    ///
     InsufficientAttributes,
+    ///
+    /// Not all attributes have same number of elements
+    ///
     UnevenAttributeLengths,
+    ///
+    /// Indices will try and index outside of length of attributes
+    ///
     AttributeIndexOverflow,
+    ///
+    /// Number of items in shape does not work with topology
+    ///
     LengthTopologyMismatch,
+    ///
+    /// There are zero attributes in the shape
+    ///
     ZeroVertices,
+    ///
+    /// A triangle shares an edge with a triangle that is wound
+    /// opposite to it.
+    ///
+    /// ## Note
+    /// This may cause unexpected results when subdividing, but
+    /// will not cause a panic. Open an issue on the repository
+    /// if you wish for different behaviour on finding this case.
+    ///
+    /// Additionally, this is the last check run when running a
+    /// shape validation, so if this is what is returned, and is
+    /// expected of the shape you're processing, then you can
+    /// continue knowing that the rest of the parts of the shape
+    /// are valid.
+    ///
+    TriangleNeighbourWindingMismatch,
 }
 
 pub struct Shape {
@@ -58,14 +90,15 @@ impl Shape {
         }
 
         let len = self.attributes[0].len();
+
+        if len == 0 {
+            return Err(ShapeValidationError::ZeroVertices);
+        }
+
         for attrib in self.attributes.iter().skip(1) {
             if len != attrib.len() {
                 return Err(ShapeValidationError::UnevenAttributeLengths);
             }
-        }
-
-        if len == 0 {
-            return Err(ShapeValidationError::ZeroVertices);
         }
 
         match self.topology {
@@ -84,6 +117,25 @@ impl Shape {
         if let Some(indices) = &self.indices {
             if indices.iter().any(|x| *x as usize >= len) {
                 return Err(ShapeValidationError::AttributeIndexOverflow);
+            }
+        }
+
+        if let (Some(indices), Topology::TriangleListCCW) | (Some(indices), Topology::TriangleListCW) = (&self.indices, self.topology) {
+            let mut edge_set = HashSet::new();
+            for triangle in indices.chunks_exact(3) {
+                let a = triangle[0];
+                let b = triangle[1];
+                let c = triangle[2];
+
+                if edge_set.contains(&(a, b)) ||
+                    edge_set.contains(&(b, c)) ||
+                    edge_set.contains(&(c, a)) {
+                    return Err(ShapeValidationError::TriangleNeighbourWindingMismatch);
+                }
+
+                edge_set.insert((a, b));
+                edge_set.insert((b, c));
+                edge_set.insert((c, a));
             }
         }
 
