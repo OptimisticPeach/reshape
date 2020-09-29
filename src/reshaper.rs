@@ -850,6 +850,29 @@ fn subdivide_triangles(mut triangle_params: TriangleSubdivideParams) {
 
         triangle_params.shape.indices = Some(indices);
     } else {
-        todo!();
+        // Might want to change this later into an actual algorithm
+        // Add default indices, and get code above to deal with the
+        // subdivisions. We then unroll the indices.
+        triangle_params.shape.indices = Some((0..len!(triangle_params.shape) as u32).iter().collect());
+        let new_params = TriangleSubdivideParams {
+            is_ccw: triangle_params.is_ccw,
+            shape: &mut triangle_params.shape,
+            subdivisions: triangle_params.subdivisions,
+            position_interpolation: &mut triangle_params.position_interpolation,
+            colour_interpolation: &mut triangle_params.colour_interpolation,
+            uv_interpolation: &mut triangle_params.uv_interpolation,
+            normal_interpolation: triangle_params.normal_interpolation.as_mut().map(|x| &mut **x),
+        };
+        subdivide_triangles(new_params);
+        // Unroll indices into actual triangles
+
+    }
+}
+
+unsafe fn unroll_fast<T: Clone>(data: &mut Vec<T>, indices: &[u32]) {
+    let mut new_data = Vec::with_capacity(indices.len());
+
+    for i in 0..indices.len() / 4 {
+        
     }
 }
