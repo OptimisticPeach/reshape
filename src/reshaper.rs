@@ -1,6 +1,6 @@
 use crate::{LerpParams, Operation, Shape, Topology, Vector, VertexAttribute};
 use crate::{Vec2, Vec3, Vec4};
-use std::ops::{Index, Range};
+use std::ops::Range;
 use std::collections::HashMap;
 
 pub trait ReshapeImpl {
@@ -329,24 +329,24 @@ impl RevRange {
         }
     }
 
-    pub fn index<T>(&self, slice: &[T], index: usize) -> &[T] {
+    pub fn index<'a, T>(&self, slice: &'a [T], index: usize) -> &'a T {
         match self {
             RevRange::Forward(start, end) => {
-                &slice[start as usize..end as usize][index]
+                &slice[*start as usize..*end as usize][index]
             },
             RevRange::Backward(start, end) => {
-                &slice[start as usize..end as usize][(end as usize - start as usize) - index - 1]
+                &slice[*start as usize..*end as usize][(*end as usize - *start as usize) - index - 1]
             },
         }
     }
 
-    pub fn index_mut<T>(&self, slice: &mut [T], index: usize) -> &mut [T] {
+    pub fn index_mut<'a, T>(&self, slice: &'a mut [T], index: usize) -> &'a mut T {
         match self {
             RevRange::Forward(start, end) => {
-                &mut slice[start as usize..end as usize][index]
+                &mut slice[*start as usize..*end as usize][index]
             },
             RevRange::Backward(start, end) => {
-                &mut slice[start as usize..end as usize][(end as usize - start as usize) - index - 1]
+                &mut slice[*start as usize..*end as usize][(*end as usize - *start as usize) - index - 1]
             },
         }
     }
@@ -383,8 +383,8 @@ impl RevRange {
             panic!("Index {} is out of range", n);
         }
         match self {
-            RevRange::Forward(start, _) => *start + n,
-            RevRange::Backward(_, start) => *start - n,
+            RevRange::Forward(start, _) => *start + n as u32,
+            RevRange::Backward(_, start) => *start - n as u32,
         }
     }
 }
@@ -448,12 +448,6 @@ impl<'a> ExactSizeIterator for &'a mut RevRange {
     fn len(&self) -> usize {
         RevRange::len(&*self) as usize
     }
-
-    fn is_empty(&self) -> bool {
-        match self {
-            RevRange::Forward(start, end) | RevRange::Backward(start, end) => *start == *end
-        }
-    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -471,10 +465,10 @@ macro_rules! indexed_triangle_idx {
         fn $name(&self, idx: usize) -> u32 {
             if idx == 0 {
                 self.$first
-            } else if idx == 1 + self.$both.len() {
+            } else if idx == 1 + self.$both.len() as usize {
                 self.$last
             } else {
-                self.$both.nth(idx - 1)
+                self.$both.get(idx - 1)
             }
         }
     };
@@ -530,13 +524,13 @@ macro_rules! subdivide_all {
             use VertexAttribute::*;
             match attribute {
                 Colour(x) => subdivide_line($a, $b, &mut $params.colour_interpolation, $subdivisions, x),
-                Position(x) => subdivide_half($a, $b, &mut $params.position_interpolation, $subdivisions, x),
-                UV(x) => subdivide_half($a, $b, &mut $params.uv_interpolation, $subdivisions, x),
+                Position(x) => subdivide_line($a, $b, &mut $params.position_interpolation, $subdivisions, x),
+                UV(x) => subdivide_line($a, $b, &mut $params.uv_interpolation, $subdivisions, x),
                 Normal(x) => {
                     if let Some(normal_interpolation) = &mut $params.normal_interpolation {
-                        subdivide_half($a, $b, normal_interpolation, $subdivisions, x);
+                        subdivide_line($a, $b, normal_interpolation, $subdivisions, x);
                     } else {
-                        x.extend((0..$subdivisions).map(|_| Default::default()));
+                        x.extend((0..$subdivisions).map::<$crate::Vec3, _>(|_| Default::default()));
                     }
                 }
             }
@@ -604,29 +598,29 @@ impl IndexedTriangle {
                         // Adj. A
                         self.ca.last(),
                         self.ab.first(),
-                        x,
+                        *x,
                         // Adj. B
                         self.ab.last(),
                         self.bc.first(),
-                        x,
+                        *x,
                         // Adj. C
                         self.bc.last(),
                         self.ca.first(),
-                        x,
+                        *x,
 
                         // Opposite to outer triangles:
                         // Opp. A
                         self.bc.first(),
                         self.bc.last(),
-                        x,
+                        *x,
                         // Opp. B
                         self.ca.first(),
                         self.ca.last(),
-                        x,
+                        *x,
                         // Opp. C
                         self.ab.first(),
                         self.ab.last(),
-                        x
+                        *x
                     ]
                 );
             },
@@ -716,7 +710,7 @@ impl IndexedTriangle {
     }
 
     fn make_next_triangle(&self, params: &mut TriangleSubdivideParams) -> Option<Self> {
-        match self.ab.len() {
+        match self.ab.len() as usize {
             0 | 1 => None,
             2 => {
                 subdivide_all!(half: self.ab.first(), self.bc.last(), params);
@@ -760,15 +754,15 @@ impl IndexedTriangle {
 
                 let ab_start = len!(params.shape) as u32;
                 subdivide_all!(line: a, b, inner_length, params);
-                let ab = RevRange::forward(ab_start..ab_start + inner_length, params.is_ccw);
+                let ab = RevRange::forward(ab_start..ab_start + inner_length as u32, params.is_ccw);
 
                 let bc_start = len!(params.shape) as u32;
                 subdivide_all!(line: b, c, inner_length, params);
-                let bc = RevRange::forward(bc_start..bc_start + inner_length, params.is_ccw);
+                let bc = RevRange::forward(bc_start..bc_start + inner_length as u32, params.is_ccw);
 
                 let ca_start = len!(params.shape) as u32;
                 subdivide_all!(line: c, a, inner_length, params);
-                let ca = RevRange::forward(ca_start..ca_start + inner_length, params.is_ccw);
+                let ca = RevRange::forward(ca_start..ca_start + inner_length as u32, params.is_ccw);
 
                 Some(
                     Self {
@@ -853,7 +847,7 @@ fn subdivide_triangles(mut triangle_params: TriangleSubdivideParams) {
         // Might want to change this later into an actual algorithm
         // Add default indices, and get code above to deal with the
         // subdivisions. We then unroll the indices.
-        triangle_params.shape.indices = Some((0..len!(triangle_params.shape) as u32).iter().collect());
+        triangle_params.shape.indices = Some((0..len!(triangle_params.shape) as u32).collect());
         let new_params = TriangleSubdivideParams {
             is_ccw: triangle_params.is_ccw,
             shape: &mut triangle_params.shape,
@@ -865,14 +859,47 @@ fn subdivide_triangles(mut triangle_params: TriangleSubdivideParams) {
         };
         subdivide_triangles(new_params);
         // Unroll indices into actual triangles
-
+        for attrib in &mut triangle_params.shape.attributes {
+            unsafe {
+                match attrib {
+                    VertexAttribute::Colour(x) =>
+                        unroll_fast(x, triangle_params.shape.indices.as_ref().unwrap()),
+                    VertexAttribute::Position(x) =>
+                        unroll_fast(x, triangle_params.shape.indices.as_ref().unwrap()),
+                    VertexAttribute::UV(x) =>
+                        unroll_fast(x, triangle_params.shape.indices.as_ref().unwrap()),
+                    VertexAttribute::Normal(x) =>
+                        unroll_fast(x, triangle_params.shape.indices.as_ref().unwrap()),
+                }
+            }
+        }
+        triangle_params.shape.indices = None;
     }
 }
 
+///
+/// SAFETY:
+/// Any given value within indices should not access outside of
+/// data.len();
+///
 unsafe fn unroll_fast<T: Clone>(data: &mut Vec<T>, indices: &[u32]) {
-    let mut new_data = Vec::with_capacity(indices.len());
-
+    let mut new_data = Vec::<T>::with_capacity(indices.len());
+    new_data.reserve(indices.len());
+    let mut ptr = new_data.as_mut_ptr();
     for i in 0..indices.len() / 4 {
-        
+        let i = i * 4;
+        ptr.offset(2).write(data.get_unchecked(*indices.get_unchecked(i + 2) as usize).clone());
+        ptr.offset(0).write(data.get_unchecked(*indices.get_unchecked(i + 0) as usize).clone());
+        ptr.offset(3).write(data.get_unchecked(*indices.get_unchecked(i + 3) as usize).clone());
+        ptr.offset(1).write(data.get_unchecked(*indices.get_unchecked(i + 1) as usize).clone());
+        ptr = ptr.offset(4);
     }
+    let rest = indices.len() % 4;
+    let start = indices.len() - rest;
+    for i in start..indices.len() {
+        ptr.write(data.get_unchecked(*indices.get_unchecked(i) as usize).clone());
+        ptr = ptr.offset(1);
+    }
+    new_data.set_len(indices.len());
+    *data = new_data;
 }
